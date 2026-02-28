@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>WorkLog Pro v4</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<style>
+:root { --ios-blue: #007AFF; --ios-bg: #F2F2F7; }
+body { background-color: var(--ios-bg); font-family: -apple-system, system-ui, sans-serif; padding-bottom: 140px; }
+.ios-card { background: white; border-radius: 14px; margin-bottom: 12px; transition: all 0.2s; }
+.btn-check { transition: all 0.2s; border: 1px solid #e2e8f0; font-size: 10px; padding: 6px 2px; border-radius: 8px; text-align: center; font-weight: 600; color: #64748b; cursor:pointer;}
+.btn-check.active { background-color: #007AFF; color: white; border-color: #007AFF; }
+.sticky-header { position: sticky; top: 0; z-index: 50; backdrop-filter: blur(20px); background: rgba(242, 242, 247, 0.85); border-bottom: 0.5px solid #d1d1d6; }
+input[type="number"] { -moz-appearance: textfield; }
+input::-webkit-outer-spin-button, input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+</style>
+</head>
+<body>
+
+<header class="sticky-header px-4 pt-10 pb-4">
+<div class="flex justify-between items-end">
+<div>
+<h1 id="titoloMese" class="text-3xl font-bold tracking-tight">Mese</h1>
+<p id="subtotale" class="text-blue-500 font-semibold text-sm">0.00€ calcolati</p>
+</div>
+<div class="flex gap-2">
+<select id="selectMese" class="bg-white border-none rounded-lg px-2 py-1 text-sm font-medium outline-none"></select>
+<select id="selectAnno" class="bg-white border-none rounded-lg px-2 py-1 text-sm font-medium outline-none"></select>
+</div>
+</div>
+</header>
+
+<div class="grid grid-cols-2 gap-3 p-4">
+<div class="ios-card p-4 shadow-sm">
+<span class="text-[10px] uppercase text-gray-400 font-bold block mb-1">Ore (Extra)</span>
+<span id="statOre" class="text-xl font-bold text-slate-800">0h <span class="text-orange-500 text-sm">(0)</span></span>
+</div>
+<div class="ios-card p-4 shadow-sm">
+<span class="text-[10px] uppercase text-gray-400 font-bold block mb-1">Tot. Rimborsi</span>
+<span id="statSoldi" class="text-xl font-bold text-emerald-600 tracking-tight">0.00€</span>
+</div>
+</div>
+
+<div id="listaGiorni" class="px-4"></div>
+
+<div class="px-4 mt-4 mb-8 text-center">
+<button onclick="resetMese()" class="text-red-500 text-xs font-bold uppercase tracking-widest py-4">
+⚠️ Svuota tutto il mese
+</button>
+</div>
+
+<div class="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-md border-t p-4 flex justify-between items-center pb-8 px-6">
+<div class="text-center">
+<span id="statAnno" class="text-lg font-bold block leading-none">0h</span>
+<span class="text-[9px] text-gray-400 uppercase font-extrabold">Ore Anno</span>
+</div>
+<button onclick="esportaExcel()" class="bg-blue-600 text-white px-8 py-3 rounded-2xl font-bold text-sm shadow-lg active:scale-95 transition flex items-center gap-2">
+<span>Esporta Excel</span>
+</button>
+</div>
+
+<script>
+const mesi = ["Gennaio","Febbraio","Marzo","Aprile","Maggio","Giugno","Luglio","Agosto","Settembre","Ottobre","Novembre","Dicembre"];
+const tariffe = { entro200:5.16, oltre200:10.33, prima7:4.65, dopo20:4.65, notte:15.49 };
+
+let datiLavoro = JSON.parse(localStorage.getItem('worklog_v4')) || {};
+
+const selMese = document.getElementById('selectMese');
+const selAnno = document.getElementById('selectAnno');
+
+function init(){
+const oggi = new Date();
+
+mesi.forEach((m,i)=>{
+selMese.innerHTML += `<option value="${i}" ${i===oggi.getMonth()?'selected':''}>${m}</option>`;
+});
+
+for(let a=2024;a<=2028;a++){
+selAnno.innerHTML += `<option value="${a}" ${a===oggi.getFullYear()?'selected':''}>${a}</option>`;
+}
+
+selMese.addEventListener('change',render);
+selAnno.addEventListener('change',render);
+render();
+}
+
+function render(){
+const m=parseInt(selMese.value);
+const a=parseInt(selAnno.value);
+const numGiorni=new Date(a,m+1,0).getDate();
+const container=document.getElementById('listaGiorni');
+
+document.getElementById('titoloMese').innerText=mesi[m];
+container.innerHTML='';
+
+for(let g=1;g<=numGiorni;g++){
+
+const id=`${a}-${m}-${g}`;
+const r=datiLavoro[id]||{ore:8,cliente:'',km:0,ind:[],altreSpese:0};
+
+const card=document.createElement('div');
+card.className="ios-card p-4 shadow-sm relative";
+
+card.innerHTML=`
+<div class="flex justify-between items-start mb-4">
+<div class="flex items-center gap-3">
+<span class="w-10 h-10 flex items-center justify-center rounded-full bg-slate-100 font-bold text-slate-500">${g}</span>
+<input type="text" value="${r.cliente||''}" onchange="salva('${id}','cliente',this.value)" placeholder="Cliente" class="font-bold text-lg border-none p-0 w-32 focus:ring-0">
+</div>
+<div class="flex gap-2">
+<button onclick="resetGiorno('${id}')" class="p-2 text-gray-300 hover:text-red-400">🗑</button>
+<div class="flex items-center gap-1 bg-blue-50 px-2 py-1 rounded-xl">
+<input type="number" step="0.5" value="${r.ore}" onchange="salva('${id}','ore',this.value)" class="w-8 text-center font-bold text-blue-600 bg-transparent border-none p-0 focus:ring-0">
+<span class="text-[9px] text-blue-400 font-bold uppercase">h</span>
+</div>
+</div>
+</div>
+
+<div class="grid grid-cols-5 gap-1 mb-4">
+<div onclick="toggleInd('${id}','entro200')" class="btn-check ${r.ind.includes('entro200')?'active':''}">KM <200</div>
+<div onclick="toggleInd('${id}','oltre200')" class="btn-check ${r.ind.includes('oltre200')?'active':''}">KM >200</div>
+<div onclick="toggleInd('${id}','prima7')" class="btn-check ${r.ind.includes('prima7')?'active':''}">ANTE 7</div>
+<div onclick="toggleInd('${id}','dopo20')" class="btn-check ${r.ind.includes('dopo20')?'active':''}">POST 20</div>
+<div onclick="toggleInd('${id}','notte')" class="btn-check ${r.ind.includes('notte')?'active':''}">NOTTE</div>
+</div>
+
+<div class="grid grid-cols-2 gap-4 border-t pt-3 border-slate-50">
+<div class="flex flex-col gap-2">
+<div class="flex items-center gap-2">
+<span class="text-[10px] font-bold text-slate-400 uppercase w-8">KM:</span>
+<input type="number" value="${r.km||0}" onchange="salva('${id}','km',this.value)" class="w-full font-bold text-sm bg-slate-50 rounded px-1">
+</div>
+<div class="flex items-center gap-2">
+<span class="text-[10px] font-bold text-slate-400 uppercase w-8">Extra:</span>
+<input type="number" step="0.1" value="${r.altreSpese||0}" onchange="salva('${id}','altreSpese',this.value)" class="w-full font-bold text-sm bg-emerald-50 rounded px-1">
+</div>
+</div>
+<div class="text-right flex flex-col justify-end">
+<span class="text-[9px] text-gray-400 uppercase font-bold">Totale Giorno</span>
+<span class="font-bold text-slate-700 text-lg">${calcolaGiorno(r).toFixed(2)}€</span>
+</div>
+</div>
+`;
+
+container.appendChild(card);
+}
+
+updateStats();
+}
+
+function calcolaGiorno(r){
+let totale=parseFloat(r.altreSpese||0);
+if(r.ind) r.ind.forEach(key=>totale+=tariffe[key]);
+return totale;
+}
+
+function toggleInd(id,tipo){
+if(!datiLavoro[id]) datiLavoro[id]={ore:8,cliente:'',km:0,ind:[],altreSpese:0};
+const index=datiLavoro[id].ind.indexOf(tipo);
+if(index>-1) datiLavoro[id].ind.splice(index,1);
+else datiLavoro[id].ind.push(tipo);
+salvaDatiEStat();
+render();
+}
+
+function salva(id,campo,valore){
+if(!datiLavoro[id]) datiLavoro[id]={ore:8,cliente:'',km:0,ind:[],altreSpese:0};
+datiLavoro[id][campo]=(campo==='cliente')?valore:parseFloat(valore)||0;
+salvaDatiEStat();
+updateStats();
+}
+
+function resetGiorno(id){
+if(confirm("Vuoi azzerare i dati di questo giorno?")){
+delete datiLavoro[id];
+salvaDatiEStat();
+render();
+}
+}
+
+function resetMese(){
+if(confirm("⚠️ Sei sicuro?")){
+const m=selMese.value;
+const a=selAnno.value;
+Object.keys(datiLavoro).forEach(key=>{
+if(key.startsWith(`${a}-${m}-`)) delete datiLavoro[key];
+});
+salvaDatiEStat();
+render();
+}
+}
+
+function salvaDatiEStat(){
+localStorage.setItem('worklog_v4',JSON.stringify(datiLavoro));
+}
+
+function updateStats(){
+let tOre=0,tExtra=0,tEuro=0,tAnno=0;
+const curM=selMese.value;
+const curA=selAnno.value;
+
+Object.entries(datiLavoro).forEach(([id,r])=>{
+const [a,m]=id.split('-');
+if(a==curA){
+tAnno+=(r.ore||0);
+if(m==curM){
+tOre+=(r.ore||0);
+if(r.ore>8) tExtra+=(r.ore-8);
+tEuro+=calcolaGiorno(r);
+}
+}
+});
+
+document.getElementById('statOre').innerHTML=`${tOre}h <span class="text-orange-500 text-sm">(+${tExtra})</span>`;
+document.getElementById('statSoldi').innerText=`${tEuro.toFixed(2)}€`;
+document.getElementById('subtotale').innerText=`${tEuro.toFixed(2)}€ rimborso mese`;
+document.getElementById('statAnno').innerText=tAnno+'h';
+}
+
+function esportaExcel(){
+const m=selMese.value;
+const a=selAnno.value;
+
+const rows=[["DATA","CLIENTE","ORE TOT","ORD","EXTRA","KM","INDENNITA €","ALTRE SPESE €","TOT GIORNO","DETTAGLIO"]];
+const numGiorni=new Date(a,parseInt(m)+1,0).getDate();
+
+for(let g=1;g<=numGiorni;g++){
+const id=`${a}-${m}-${g}`;
+const r=datiLavoro[id]||{ore:0,cliente:'',km:0,ind:[],altreSpese:0};
+const extra=r.ore>8?r.ore-8:0;
+const indennitaSolo=calcolaGiorno({...r,altreSpese:0});
+
+rows.push([
+`${g}/${parseInt(m)+1}/${a}`,
+r.cliente,
+r.ore,
+r.ore>8?8:r.ore,
+extra,
+r.km,
+indennitaSolo.toFixed(2),
+(r.altreSpese||0).toFixed(2),
+calcolaGiorno(r).toFixed(2),
+r.ind.join(", ")
+]);
+}
+
+const ws=XLSX.utils.aoa_to_sheet(rows);
+const wb=XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(wb,ws,"Report");
+XLSX.writeFile(wb,`Report_Lavoro_${mesi[m]}_${a}.xlsx`);
+}
+
+init();
+</script>
+</body>
+</html>
